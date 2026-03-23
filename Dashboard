@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G2G Executive Master Report</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); }
+        .tab-active { border-bottom: 3px solid #2563eb; color: #2563eb; }
+        .batch-row:hover { background-color: #f8fafc; }
+        .order-row:hover { background-color: #1e293b; }
+        .drill-card { transition: transform 0.2s; cursor: pointer; border-radius: 1rem; }
+        .drill-card:hover { transform: translateY(-3px); }
+        .search-sticky { position: sticky; top: 73px; z-index: 10; background: #f1f5f9; padding: 1rem 0; }
+        .chart-btn-active { background-color: #2563eb; color: white; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        #loader-overlay { transition: opacity 0.3s ease; }
+        .progress-container { width: 100%; background-color: #1e293b; border-radius: 99px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 8px; background: linear-gradient(90deg, #3b82f6, #10b981); transition: width 0.1s; }
+        .fullscreen-chart { position: fixed !important; top: 0; left: 0; width: 100vw !important; height: 100vh !important; z-index: 1000; background: white; padding: 40px; }
+        #btn-minimize { display: none; }
+        .fullscreen-chart #btn-minimize { display: inline-block; }
+        .fullscreen-chart #btn-maximize { display: none; }
+        body.presentation-mode header, body.presentation-mode .search-sticky, body.presentation-mode #view-data, body.presentation-mode .meeting-controls, body.presentation-mode #analytics-batch-filter, body.presentation-mode .chart-opt-container { display: none !important; }
+        body.presentation-mode .drill-card { border: 1px solid #e2e8f0; }
+        body.presentation-mode main { max-width: 100%; padding: 2rem; }
+    </style>
+</head>
+<body class="bg-slate-100 font-sans text-slate-900 min-h-screen">
+
+    <div id="loader-overlay" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-md">
+        <div class="w-full max-w-md p-8 text-center">
+            <p id="loader-text" class="text-white font-black uppercase tracking-widest text-xs mb-4">Processing Data...</p>
+            <div class="progress-container"><div id="progress-bar"></div></div>
+            <p id="loader-perc" class="text-blue-400 font-mono mt-2 text-sm">0%</p>
+        </div>
+    </div>
+
+    <div id="quick-edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+            <div class="bg-slate-900 p-6 flex justify-between items-center">
+                <div>
+                    <p id="modal-batch-name" class="text-blue-400 text-[10px] font-black uppercase tracking-widest">BATCH: NAME</p>
+                    <h2 id="modal-order-id" class="text-xl font-black text-white">ORD-000</h2>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white text-2xl font-bold">×</button>
+            </div>
+            <div id="modal-content" class="p-6 space-y-4"></div>
+            <div class="p-4 bg-slate-50 border-t flex justify-end">
+                <button onclick="closeModal()" class="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold text-sm">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <header class="glass sticky top-0 z-20 border-b border-slate-200 px-8 py-4 flex justify-between items-center">
+        <div class="flex items-center space-x-4">
+            <div id="client-logo-container" class="w-10 h-10 bg-slate-200 rounded-lg flex items-center justify-center overflow-hidden border-2 border-white shadow-inner cursor-pointer" onclick="document.getElementById('logo-upload').click()">
+                <img id="client-logo" class="hidden w-full h-full object-contain">
+                <span id="logo-placeholder" class="text-[8px] font-bold text-slate-400 text-center leading-tight">ADD<br>LOGO</span>
+                <input type="file" id="logo-upload" class="hidden" accept="image/*" onchange="loadLogo(event)">
+            </div>
+            <h1 class="text-2xl font-black text-slate-800 tracking-tighter">G2G <span class="text-blue-600 underline">MASTER</span></h1>
+        </div>
+        <div class="flex space-x-8">
+            <button onclick="switchView('analytics')" id="btn-analytics" class="font-bold pb-1 tab-active">Deep Analytics</button>
+            <button onclick="switchView('data')" id="btn-data" class="font-bold pb-1 text-slate-400">Inventory & Edits</button>
+        </div>
+        <div class="flex items-center space-x-4">
+            <button onclick="saveData(true)" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-emerald-700 shadow-md">Cloud Sync</button>
+            <button onclick="addNewBatch()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 shadow-md">+ New Batch</button>
+        </div>
+    </header>
+
+    <main id="capture-area" class="p-8 max-w-6xl mx-auto">
+        <div class="meeting-controls flex flex-wrap gap-3 mb-6 items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div class="flex gap-2">
+                <button onclick="togglePresentationMode()" class="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-slate-700">📺 Presentation</button>
+                <button onclick="exportSnapshot()" class="bg-blue-50 text-blue-600 border border-blue-200 px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-100">📸 Snapshot</button>
+            </div>
+            <div class="flex items-center space-x-2 border-l pl-4 border-slate-200">
+                <span class="text-[10px] font-black text-slate-400 uppercase">Comparison:</span>
+                <input type="checkbox" id="compare-toggle" onchange="updateAnalytics()" class="w-4 h-4 text-blue-600">
+            </div>
+        </div>
+
+        <div id="view-analytics" class="space-y-8">
+            <div id="red-flag-box" class="hidden bg-rose-50 border border-rose-100 rounded-2xl p-5 animate-pulse">
+                <div id="red-flag-content" class="text-rose-700 text-sm font-medium"></div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div onclick="drillDown('RTS')" class="drill-card bg-white p-5 border-l-8 border-rose-500 shadow-sm">
+                    <p class="text-slate-400 font-bold text-[10px] uppercase">RTS <span id="perc-rts" class="ml-2 text-rose-400">0%</span></p>
+                    <h3 id="stat-rts" class="text-2xl font-black text-rose-600">0</h3>
+                    <div id="diff-rts" class="text-[9px]"></div>
+                </div>
+                <div onclick="drillDown('Pending')" class="drill-card bg-white p-5 border-l-8 border-amber-500 shadow-sm">
+                    <p class="text-slate-400 font-bold text-[10px] uppercase">Pending <span id="perc-pending" class="ml-2 text-amber-400">0%</span></p>
+                    <h3 id="stat-pending" class="text-2xl font-black text-amber-600">0</h3>
+                    <div id="diff-pending" class="text-[9px]"></div>
+                </div>
+                <div onclick="drillDown('Proceeded')" class="drill-card bg-white p-5 border-l-8 border-emerald-500 shadow-sm">
+                    <p class="text-slate-400 font-bold text-[10px] uppercase">Proceeded <span id="perc-proceeded" class="ml-2 text-emerald-400">0%</span></p>
+                    <h3 id="stat-Proceeded" class="text-2xl font-black text-emerald-600">0</h3>
+                    <div id="diff-proceeded" class="text-[9px]"></div>
+                </div>
+                <div class="drill-card bg-slate-800 p-5 border-l-8 border-blue-400 shadow-sm text-white">
+                    <p class="text-slate-400 font-bold text-[10px] uppercase">Success Rate</p>
+                    <h3 id="stat-success" class="text-2xl font-black text-blue-400">0%</h3>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div id="chart-card" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative">
+                    <div class="flex justify-between mb-4">
+                        <select id="analytics-batch-filter" onchange="updateAnalytics()" class="bg-slate-100 text-[10px] font-bold py-1 px-2 rounded-lg outline-none"><option value="all">All Batches</option></select>
+                        <div class="flex space-x-1">
+                            <button onclick="changeChart('pie')" class="chart-opt px-2 py-1 text-[10px] font-bold rounded" id="opt-pie">Pie</button>
+                            <button onclick="changeChart('bar')" class="chart-opt px-2 py-1 text-[10px] font-bold rounded" id="opt-bar">Bar</button>
+                            <button onclick="toggleFullScreen()" class="text-[10px] ml-2 font-black text-slate-400">⛶</button>
+                        </div>
+                    </div>
+                    <div id="chart-draw-area" class="h-64"><canvas id="mainChart"></canvas></div>
+                </div>
+                <div class="bg-slate-900 rounded-2xl p-6 flex flex-col h-[400px]">
+                    <h3 id="drill-title" class="text-blue-400 font-black text-[10px] uppercase text-center mb-1">Select Status</h3>
+                    <p id="drill-total" class="text-slate-500 text-[9px] font-bold text-center mb-4">Total: 0</p>
+                    <div id="drill-list" class="space-y-3 overflow-y-auto pr-2 custom-scroll"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-data" class="hidden">
+            <div class="search-sticky">
+                <input type="text" id="globalSearch" oninput="handleSearch()" placeholder="Search ID, Batch, Reason..." class="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 shadow-sm outline-none">
+            </div>
+            <div id="batch-container" class="space-y-4 mt-4"></div>
+        </div>
+    </main>
+
+    <script>
+        // --- CONFIGURATION ---
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx-Br5zGXMlLEUqOsyvN0WVAu6IUP9DkJ312Yv2NyOHUYGX3h9eZOoD6Nilp7-jRSSYFw/exec"; 
+        // ---------------------
+
+        let masterData = [];
+        let searchQuery = "";
+        let currentChartType = 'pie';
+        let myChart;
+
+        async function init() {
+            showLoader("Connecting to Google Sheets...");
+            try {
+                const res = await fetch(SCRIPT_URL);
+                masterData = await res.json();
+                render();
+                updateAnalytics();
+            } catch (e) { console.error(e); }
+            hideLoader();
+        }
+
+        async function saveData(showMsg = false) {
+            showLoader("Syncing to Cloud...");
+            try {
+                await fetch(`${SCRIPT_URL}?action=sync`, {
+                    method: 'POST',
+                    mode: 'no-cors', // Essential for Apps Script POST
+                    body: JSON.stringify(masterData)
+                });
+                if(showMsg) alert("Success! Note: Cloud takes a few seconds to reflect.");
+                updateAnalytics();
+            } catch (e) { alert("Sync failed"); }
+            hideLoader();
+        }
+
+        function loadLogo(event) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const output = document.getElementById('client-logo');
+                output.src = reader.result;
+                output.classList.remove('hidden');
+                document.getElementById('logo-placeholder').classList.add('hidden');
+            };
+            reader.readAsDataURL(event.target.files[0]);
+        }
+
+        function showLoader(text) {
+            document.getElementById('loader-text').innerText = text;
+            document.getElementById('loader-overlay').classList.remove('hidden');
+            updateProgress(0);
+        }
+        function hideLoader() { document.getElementById('loader-overlay').classList.add('hidden'); }
+        function updateProgress(p) {
+            document.getElementById('progress-bar').style.width = p + "%";
+            document.getElementById('loader-perc').innerText = Math.round(p) + "%";
+        }
+
+        function standardizeStatus(s) {
+            const norm = (s || '').toUpperCase().trim();
+            if (norm === 'RTS') return 'RTS';
+            if (norm === 'PROCEEDED') return 'Proceeded';
+            return 'Pending';
+        }
+
+        function togglePresentationMode() { document.body.classList.toggle('presentation-mode'); if(myChart) myChart.resize(); }
+        function toggleFullScreen() {
+            const card = document.getElementById('chart-card');
+            card.classList.toggle('fullscreen-chart');
+            document.getElementById('chart-draw-area').style.height = card.classList.contains('fullscreen-chart') ? '80vh' : '16rem';
+            if(myChart) myChart.resize();
+        }
+
+        function updateAnalytics() {
+            const filter = document.getElementById('analytics-batch-filter');
+            const currentVal = filter.value;
+            filter.innerHTML = '<option value="all">All Batches</option>';
+            masterData.forEach((b, i) => filter.innerHTML += `<option value="${i}">${b.batchName}</option>`);
+            filter.value = currentVal;
+
+            const stats = { RTS: 0, Pending: 0, Proceeded: 0 };
+            const activeData = filter.value === 'all' ? masterData : [masterData[filter.value]];
+            
+            activeData.forEach(b => b.orders.forEach(o => stats[standardizeStatus(o.status)]++));
+
+            const total = stats.RTS + stats.Pending + stats.Proceeded;
+            const getP = (v) => total > 0 ? (v/total*100).toFixed(1) + "%" : "0%";
+
+            document.getElementById('stat-rts').innerText = stats.RTS;
+            document.getElementById('perc-rts').innerText = getP(stats.RTS);
+            document.getElementById('stat-pending').innerText = stats.Pending;
+            document.getElementById('perc-pending').innerText = getP(stats.Pending);
+            document.getElementById('stat-Proceeded').innerText = stats.Proceeded;
+            document.getElementById('perc-proceeded').innerText = getP(stats.Proceeded);
+            document.getElementById('stat-success').innerText = getP(stats.Proceeded);
+
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            if (myChart) myChart.destroy();
+            myChart = new Chart(ctx, {
+                type: currentChartType,
+                data: {
+                    labels: ['RTS', 'Pending', 'Proceeded'],
+                    datasets: [{
+                        data: [stats.RTS, stats.Pending, stats.Proceeded],
+                        backgroundColor: ['#f43f5e', '#f59e0b', '#10b981'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            });
+        }
+
+        async function drillDown(status) {
+            const list = document.getElementById('drill-list');
+            const target = status.toUpperCase().trim();
+            document.getElementById('drill-title').innerText = target;
+            list.innerHTML = '';
+            
+            let matches = [];
+            masterData.forEach((b, bIdx) => {
+                b.orders.forEach((o, oIdx) => {
+                    if(standardizeStatus(o.status).toUpperCase() === target) {
+                        matches.push({o, bIdx, oIdx, bName: b.batchName});
+                    }
+                });
+            });
+
+            document.getElementById('drill-total').innerText = `Total: ${matches.length}`;
+            matches.forEach(m => {
+                list.insertAdjacentHTML('beforeend', `
+                    <div onclick="openQuickEdit(${m.bIdx}, ${m.oIdx})" class="p-4 bg-slate-800 rounded-xl border-l-4 border-blue-500 cursor-pointer hover:bg-slate-700">
+                        <span class="text-blue-400 font-mono text-sm">${m.o.id}</span>
+                        <p class="text-[9px] text-slate-500">${m.bName}</p>
+                        <p class="text-[11px] text-slate-400 line-clamp-1 italic">${m.o.reason || 'No reason'}</p>
+                    </div>
+                `);
+            });
+        }
+
+        function render() {
+            const container = document.getElementById('batch-container');
+            container.innerHTML = '';
+            masterData.forEach((b, bIdx) => {
+                const el = document.createElement('div');
+                el.className = "bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden";
+                el.innerHTML = `
+                    <div class="p-4 flex justify-between items-center cursor-pointer bg-slate-50" onclick="toggleBatch(${bIdx})">
+                        <div class="flex items-center space-x-3">
+                            <span class="font-bold text-blue-600">${b.expanded ? '▼' : '▶'}</span>
+                            <span class="font-black text-slate-800">${b.batchName}</span>
+                            <span class="text-[10px] bg-slate-200 px-2 py-1 rounded text-slate-600 font-bold">${b.orders.length}</span>
+                        </div>
+                        <button onclick="event.stopPropagation(); deleteBatch(${bIdx})" class="text-slate-400 hover:text-rose-500">✕</button>
+                    </div>
+                    <div class="${b.expanded ? 'block' : 'hidden'} bg-slate-900 overflow-x-auto">
+                        <div class="p-2 flex space-x-2 bg-slate-800/50">
+                            <button onclick="importBulk(${bIdx})" class="text-[10px] bg-blue-600 text-white px-3 py-1 rounded font-bold">IMPORT</button>
+                            <button onclick="addOrder(${bIdx})" class="text-[10px] text-blue-400 font-bold">+ ROW</button>
+                        </div>
+                        <table class="w-full text-xs text-slate-400">
+                            <tr class="text-[10px] uppercase font-bold border-b border-slate-800">
+                                <th class="p-3">Order ID</th><th class="p-3">Status</th><th class="p-3">Reason</th><th class="p-3">Action</th><th class="p-3">✕</th>
+                            </tr>
+                            ${b.orders.map((o, oIdx) => `
+                                <tr class="border-b border-slate-800/50">
+                                    <td class="p-3 font-mono text-blue-400">${o.id}</td>
+                                    <td class="p-3">${standardizeStatus(o.status)}</td>
+                                    <td class="p-3 line-clamp-1">${o.reason || '-'}</td>
+                                    <td class="p-3">${o.action || '-'}</td>
+                                    <td class="p-3"><button onclick="deleteOrder(${bIdx}, ${oIdx})" class="hover:text-rose-500">✕</button></td>
+                                </tr>
+                            `).join('')}
+                        </table>
+                    </div>
+                `;
+                container.appendChild(el);
+            });
+        }
+
+        async function importBulk(bIdx) {
+            const raw = prompt("Paste Data (Tab/Spaces delimited):");
+            if (!raw) return;
+            const lines = raw.trim().split('\n');
+            lines.forEach(line => {
+                const p = line.split(/\t+|\s{2,}/);
+                if(p[0]) masterData[bIdx].orders.push({ id: p[0].trim(), status: standardizeStatus(p[1]), reason: p[2]||"", action: p[3]||"" });
+            });
+            render(); saveData();
+        }
+
+        function openQuickEdit(bIdx, oIdx) {
+            const o = masterData[bIdx].orders[oIdx];
+            document.getElementById('modal-order-id').innerText = o.id;
+            document.getElementById('modal-content').innerHTML = `
+                <select id="edit-status" class="w-full p-2 bg-slate-100 rounded">
+                    <option value="Pending" ${o.status === 'Pending'?'selected':''}>Pending</option>
+                    <option value="RTS" ${o.status === 'RTS'?'selected':''}>RTS</option>
+                    <option value="Proceeded" ${o.status === 'Proceeded'?'selected':''}>Proceeded</option>
+                </select>
+                <textarea id="edit-reason" class="w-full p-2 bg-slate-100 rounded h-20" placeholder="Reason">${o.reason || ''}</textarea>
+                <input id="edit-action" class="w-full p-2 bg-slate-100 rounded" value="${o.action || ''}" placeholder="Action Taken">
+                <button onclick="saveQuickEdit(${bIdx}, ${oIdx})" class="w-full bg-blue-600 text-white p-2 rounded font-bold">Apply Changes</button>
+            `;
+            document.getElementById('quick-edit-modal').classList.remove('hidden');
+        }
+
+        function saveQuickEdit(bIdx, oIdx) {
+            masterData[bIdx].orders[oIdx].status = document.getElementById('edit-status').value;
+            masterData[bIdx].orders[oIdx].reason = document.getElementById('edit-reason').value;
+            masterData[bIdx].orders[oIdx].action = document.getElementById('edit-action').value;
+            closeModal();
+            saveData();
+        }
+
+        function closeModal() { document.getElementById('quick-edit-modal').classList.add('hidden'); render(); }
+        function switchView(v) {
+            document.getElementById('view-data').classList.toggle('hidden', v !== 'data');
+            document.getElementById('view-analytics').classList.toggle('hidden', v !== 'analytics');
+            document.getElementById('btn-data').className = v === 'data' ? 'font-bold pb-1 tab-active' : 'font-bold pb-1 text-slate-400';
+            document.getElementById('btn-analytics').className = v === 'analytics' ? 'font-bold pb-1 tab-active' : 'font-bold pb-1 text-slate-400';
+            if(v === 'analytics') updateAnalytics();
+        }
+
+        function toggleBatch(i) { masterData[i].expanded = !masterData[i].expanded; render(); }
+        function addNewBatch() { masterData.unshift({ batchName: "New Batch", expanded: true, orders: [] }); render(); switchView('data'); }
+        function deleteBatch(i) { if(confirm("Delete?")) { masterData.splice(i,1); render(); saveData(); } }
+        function deleteOrder(bi, oi) { masterData[bi].orders.splice(oi,1); render(); saveData(); }
+        function handleSearch() { searchQuery = document.getElementById('globalSearch').value.toLowerCase(); render(); }
+        function changeChart(t) { currentChartType = t; updateAnalytics(); }
+        function exportSnapshot() { html2canvas(document.getElementById('capture-area')).then(c => { const a = document.createElement('a'); a.download = 'report.png'; a.href = c.toDataURL(); a.click(); }); }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
